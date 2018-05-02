@@ -35,19 +35,20 @@ module Octopus
 
     def execute(sql, name = nil)
       conn = select_connection
-      clean_connection_proxy
+      clean_connection_proxy if should_clean_connection_proxy?('execute')
       conn.execute(sql, name)
     end
 
     def insert(arel, name = nil, pk = nil, id_value = nil, sequence_name = nil, binds = [])
       conn = select_connection
-      clean_connection_proxy
+      clean_connection_proxy if should_clean_connection_proxy?('insert')
       conn.insert(arel, name, pk, id_value, sequence_name, binds)
     end
 
     def update(arel, name = nil, binds = [])
       conn = select_connection
-      clean_connection_proxy
+      # Call the legacy should_clean_connection_proxy? method here, emulating an insert.
+      clean_connection_proxy if should_clean_connection_proxy?('insert')
       conn.update(arel, name, binds)
     end
 
@@ -179,6 +180,10 @@ module Octopus
       send_queries_to_balancer(slave_groups[current_slave_group], method, *args, &block)
     end
 
+    def current_model_replicated?
+      replicated && (current_model.try(:replicated) || fully_replicated?)
+    end
+
     protected
 
     # @thiagopradi - This legacy method missing logic will be keep for a while for compatibility
@@ -196,7 +201,13 @@ module Octopus
       elsif should_send_queries_to_replicated_databases?(method)
         send_queries_to_selected_slave(method, *args, &block)
       else
-        select_connection.send(method, *args, &block)
+        val = select_connection.send(method, *args, &block)
+
+        if val.instance_of? ActiveRecord::Result
+          val.current_shard = shard_name
+        end
+
+        val
       end
     end
 
@@ -240,10 +251,6 @@ module Octopus
       replicated && method.to_s =~ /select/ && !block && !slaves_grouped?
     end
 
-    def current_model_replicated?
-      replicated && (current_model.try(:replicated) || fully_replicated?)
-    end
-
     def send_queries_to_selected_slave(method, *args, &block)
       if current_model.replicated || fully_replicated?
         selected_slave = slaves_load_balancer.next current_load_balance_options
@@ -281,7 +288,11 @@ module Octopus
     # while preserving `current_shard`
     def send_queries_to_slave(slave, method, *args, &block)
       using_shard(slave) do
-        select_connection.send(method, *args, &block)
+        val = select_connection.send(method, *args, &block)
+        if val.instance_of? ActiveRecord::Result
+          val.current_shard = slave
+        end
+        val
       end
     end
 

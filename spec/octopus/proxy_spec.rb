@@ -30,7 +30,7 @@ describe Octopus::Proxy do
       config = proxy.config
       expect(config[:adapter]).to eq('mysql2')
       expect(config[:database]).to eq('octopus_shard_1')
-      expect(config[:username]).to eq('root')
+      expect(config[:username]).to eq("#{ENV['MYSQL_USER'] || 'root'}")
     end
 
     unless Octopus.rails50? || Octopus.rails51?
@@ -248,6 +248,22 @@ describe Octopus::Proxy do
 
       it 'should save all associated objects on the correct shard' do
         expect { subject }.to_not raise_error
+      end
+    end
+  end
+
+
+  describe 'cleaning the connection proxy' do
+    it 'should not clean #current_shard from proxy when using a block and calling #execute' do
+      Octopus.using(:canada) do
+        expect(User.connection.current_shard).to eq(:canada)
+
+        connection = User.connection
+
+        result = connection.execute('select * from users limit 1;')
+        result = connection.execute('select * from users limit 1;')
+
+        expect(User.connection.current_shard).to eq(:canada)
       end
     end
   end

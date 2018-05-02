@@ -63,6 +63,28 @@ describe Octopus::Model do
       expect(User.all).to eq([u1])
     end
 
+    it "should allow the #select method to fetch the correct data when using a block" do
+      canadian_user = User.using(:canada).create!(:name => 'Rafael Pilha')
+
+      Octopus.using('canada') do
+        @all_canadian_user_ids = User.select('id').to_a
+      end
+
+      expect(@all_canadian_user_ids).to eq([canadian_user])
+    end
+
+    it "should allow objects to be fetch using different blocks - GH #306" do
+      canadian_user = User.using(:canada).create!(:name => 'Rafael Pilha')
+
+      Octopus.using(:canada) { @users = User.where('id is not null') }
+      Octopus.using(:canada) { @user = @users.first }
+
+      Octopus.using(:canada) { @user2 = User.where('id is not null').first }
+
+      expect(@user).to eq(canadian_user)
+      expect(@user2).to eq(canadian_user)
+    end
+
     describe 'multiple calls to the same scope' do
       it 'works with nil response' do
         scope = User.using(:canada)
@@ -715,6 +737,17 @@ describe Octopus::Model do
       OctopusHelper.using_environment :production_replicated do
         expect(User.replicated).to be_falsey
         expect(Cat.replicated).to be true
+      end
+    end
+
+    it "should work on a fully replicated environment" do
+      OctopusHelper.using_environment :production_fully_replicated do
+        User.using(:slave1).create!(name: 'Thiago')
+        User.using(:slave2).create!(name: 'Thiago')
+
+        replicated_cat = User.find_by_name 'Thiago'
+
+        expect(replicated_cat.current_shard.to_s).to match(/master/)
       end
     end
   end
