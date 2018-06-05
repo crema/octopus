@@ -3,7 +3,6 @@ module Octopus
     CURRENT_MODEL_KEY = 'octopus.current_model'.freeze
     CURRENT_SHARD_KEY = 'octopus.current_shard'.freeze
     CURRENT_GROUP_KEY = 'octopus.current_group'.freeze
-    CURRENT_SLAVE_GROUP_KEY = 'octopus.current_slave_group'.freeze
     CURRENT_LOAD_BALANCE_OPTIONS_KEY = 'octopus.current_load_balance_options'.freeze
     BLOCK_KEY = 'octopus.block'.freeze
     FULLY_REPLICATED_KEY = 'octopus.fully_replicated'.freeze
@@ -31,29 +30,15 @@ module Octopus
 
     def current_shard=(shard_symbol)
       if shard_symbol.is_a?(Array)
-        self.current_slave_group = nil
         shard_symbol.each { |symbol| fail "Nonexistent Shard Name: #{symbol}" if shards[symbol].nil? }
       elsif shard_symbol.is_a?(Hash)
         hash = shard_symbol
         shard_symbol = hash[:shard]
-        slave_group_symbol = hash[:slave_group]
         load_balance_options = hash[:load_balance_options]
-
-        if shard_symbol.nil? && slave_group_symbol.nil?
-          fail 'Neither shard or slave group must be specified'
-        end
 
         if shard_symbol.present?
           fail "Nonexistent Shard Name: #{shard_symbol}" if shards[shard_symbol].nil?
         end
-
-        if slave_group_symbol.present?
-          if (shards_slave_groups.try(:[], shard_symbol).present? && shards_slave_groups[shard_symbol][slave_group_symbol].nil?) ||
-              (shards_slave_groups.try(:[], shard_symbol).nil? && @slave_groups[slave_group_symbol].nil?)
-            fail "Nonexistent Slave Group Name: #{slave_group_symbol} in shards config: #{shards_config.inspect}"
-          end
-        end
-        self.current_slave_group = slave_group_symbol
         self.current_load_balance_options = load_balance_options
       else
         fail "Nonexistent Shard Name: #{shard_symbol}" if shards[shard_symbol].nil?
@@ -75,15 +60,6 @@ module Octopus
       Thread.current[CURRENT_GROUP_KEY] = group_symbol
     end
 
-    def current_slave_group
-      Thread.current[CURRENT_SLAVE_GROUP_KEY]
-    end
-
-    def current_slave_group=(slave_group_symbol)
-      Thread.current[CURRENT_SLAVE_GROUP_KEY] = slave_group_symbol
-      Thread.current[CURRENT_LOAD_BALANCE_OPTIONS_KEY] = nil if slave_group_symbol.nil?
-    end
-
     def current_load_balance_options
       Thread.current[CURRENT_LOAD_BALANCE_OPTIONS_KEY]
     end
@@ -92,16 +68,12 @@ module Octopus
       Thread.current[CURRENT_LOAD_BALANCE_OPTIONS_KEY] = options
     end
 
-    def block
-      Thread.current[BLOCK_KEY]
+    def in_block?
+      Thread.current['octopus.in_block'] || false
     end
 
-    def block=(block)
-      Thread.current[BLOCK_KEY] = block
-    end
-
-    def fully_replicated?
-      @fully_replicated || Thread.current[FULLY_REPLICATED_KEY]
+    def in_block=(in_block)
+      Thread.current['octopus.in_block'] = in_block
     end
 
     # Public: Whether or not a group exists with the given name converted to a

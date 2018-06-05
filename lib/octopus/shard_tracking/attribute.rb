@@ -13,9 +13,13 @@ module Octopus
       def set_current_shard
         return unless Octopus.enabled?
 
-        if ActiveRecord::Base.connection_proxy.block
+        if ActiveRecord::Base.connection_proxy.in_block?
           self.current_shard = ActiveRecord::Base.connection_proxy.current_shard
         end
+      end
+
+      def current_shard
+        @current_shard
       end
     end
   end
