@@ -149,7 +149,7 @@ If you are trying to scope everything to a specific shard, use Octopus.using ins
         if !Octopus.enabled?
           true
         elsif custom_octopus_connection
-          !connection_proxy.block || !allowed_shard?(connection_proxy.current_shard)
+          !connection_proxy.in_block? || !allowed_shard?(connection_proxy.current_shard)
         end
       end
 

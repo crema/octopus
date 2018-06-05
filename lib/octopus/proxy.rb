@@ -9,9 +9,8 @@ module Octopus
     delegate :current_model, :current_model=,
              :current_shard, :current_shard=,
              :current_group, :current_group=,
-             :current_slave_group, :current_slave_group=,
              :current_load_balance_options, :current_load_balance_options=,
-             :block, :block=, :fully_replicated?, :has_group?,
+             :in_block?, :in_block=, :fully_replicated?, :has_group?,
              :shard_names, :shards_for_group, :shards, :sharded, :slaves_list,
              :shards_slave_groups, :slave_groups, :replicated, :slaves_load_balancer,
              :config, :initialize_shards, :shard_name, to: :proxy_config, prefix: false
@@ -33,37 +32,6 @@ module Octopus
       :release_advisory_lock, :prepare_binds_for_database, :cacheable_query, :column_name_for_operation,
       :prepared_statements, :transaction_state, :create_table, to: :select_connection
 
-    def execute(sql, name = nil)
-      conn = select_connection
-      clean_connection_proxy if should_clean_connection_proxy?('execute')
-      conn.execute(sql, name)
-    end
-
-    def insert(arel, name = nil, pk = nil, id_value = nil, sequence_name = nil, binds = [])
-      conn = select_connection
-      clean_connection_proxy if should_clean_connection_proxy?('insert')
-      conn.insert(arel, name, pk, id_value, sequence_name, binds)
-    end
-
-    def update(arel, name = nil, binds = [])
-      conn = select_connection
-      # Call the legacy should_clean_connection_proxy? method here, emulating an insert.
-      clean_connection_proxy if should_clean_connection_proxy?('insert')
-      conn.update(arel, name, binds)
-    end
-
-    def delete(*args, &block)
-      legacy_method_missing_logic('delete', *args, &block)
-    end
-
-    def select_all(*args, &block)
-      legacy_method_missing_logic('select_all', *args, &block)
-    end
-
-    def select_value(*args, &block)
-      legacy_method_missing_logic('select_value', *args, &block)
-    end
-
     # Rails 3.1 sets automatic_reconnect to false when it removes
     # connection pool.  Octopus can potentially retain a reference to a closed
     # connection pool.  Previously, that would work since the pool would just
@@ -80,8 +48,8 @@ module Octopus
       safe_connection(shards[shard_name])
     end
 
-    def run_queries_on_shard(shard, &_block)
-      keeping_connection_proxy(shard) do
+    def run_queries_on_shard(shard, args={}, &_block)
+      keeping_connection_proxy(shard, args) do
         using_shard(shard) do
           yield
         end
@@ -109,6 +77,12 @@ module Octopus
       self.current_model = nil
       self.current_group = nil
       self.block = nil
+      self.in_block = false
+    end
+
+    def select_db(name)
+      slave_connection.select_db(name)
+      master_connection.select_db(name) if current_shard != master_shard_name
     end
 
     def check_schema_migrations(shard)
@@ -118,9 +92,13 @@ module Octopus
     end
 
     def transaction(options = {}, &block)
-      if !sharded && current_model_replicated?
-        run_queries_on_shard(Octopus.master_shard) do
-          select_connection.transaction(options, &block)
+      if in_block?
+        old_in_transaction = @in_transaction
+        begin
+          @in_transaction = true
+          master_connection.transaction(options, &block)
+        ensure
+          @in_transaction = old_in_transaction
         end
       else
         select_connection.transaction(options, &block)
@@ -164,22 +142,6 @@ module Octopus
       shards.any? { |_k, v| v.connected? }
     end
 
-    def should_send_queries_to_shard_slave_group?(method)
-      should_use_slaves_for_method?(method) && shards_slave_groups.try(:[], current_shard).try(:[], current_slave_group).present?
-    end
-
-    def send_queries_to_shard_slave_group(method, *args, &block)
-      send_queries_to_balancer(shards_slave_groups[current_shard][current_slave_group], method, *args, &block)
-    end
-
-    def should_send_queries_to_slave_group?(method)
-      should_use_slaves_for_method?(method) && slave_groups.try(:[], current_slave_group).present?
-    end
-
-    def send_queries_to_slave_group(method, *args, &block)
-      send_queries_to_balancer(slave_groups[current_slave_group], method, *args, &block)
-    end
-
     def current_model_replicated?
       replicated && (current_model.try(:replicated) || fully_replicated?)
     end
@@ -193,22 +155,12 @@ module Octopus
       if should_clean_connection_proxy?(method)
         conn = select_connection
         clean_connection_proxy
-        conn.send(method, *args, &block)
-      elsif should_send_queries_to_shard_slave_group?(method)
-        send_queries_to_shard_slave_group(method, *args, &block)
-      elsif should_send_queries_to_slave_group?(method)
-        send_queries_to_slave_group(method, *args, &block)
-      elsif should_send_queries_to_replicated_databases?(method)
-        send_queries_to_selected_slave(method, *args, &block)
+      elsif in_block?
+        conn = should_use_slave?(method) ? slave_connection : master_connection
       else
-        val = select_connection.send(method, *args, &block)
-
-        if val.instance_of? ActiveRecord::Result
-          val.current_shard = shard_name
-        end
-
-        val
+        conn = select_connection
       end
+      conn.send(method, *args, &block)
     end
 
     # Ensure that a single failing slave doesn't take down the entire application
@@ -243,7 +195,7 @@ module Octopus
     end
 
     def should_clean_connection_proxy?(method)
-      method.to_s =~ /insert|select|execute/ && !current_model_replicated? && (!block || block != current_shard)
+      method.to_s =~ /insert|select|execute/ && !in_block?
     end
 
     # Try to use slaves if and only if `replicated: true` is specified in `shards.yml` and no slaves groups are defined
@@ -300,21 +252,23 @@ module Octopus
     #
     # @see Octopus::Proxy#should_clean_connection?
     # @see Octopus::Proxy#clean_connection_proxy
-    def keeping_connection_proxy(shard, &_block)
-      last_block = block
+    def keeping_connection_proxy(shard, args, &_block)
+      last_in_block = in_block?
+      last_master_shard_name = master_shard_name
 
       begin
-        self.block = shard
+        self.in_block = true
+        self.master_shard_name = args[:master_shard_name] if args[:master_shard_name]
         yield
       ensure
-        self.block = last_block || nil
+        self.in_block = last_in_block
+        self.master_shard_name = last_master_shard_name
       end
     end
 
     # Temporarily switch `current_shard` and run the block
     def using_shard(shard, &_block)
       older_shard = current_shard
-      older_slave_group = current_slave_group
       older_load_balance_options = current_load_balance_options
 
       begin
@@ -324,7 +278,6 @@ module Octopus
         yield
       ensure
         self.current_shard = older_shard
-        self.current_slave_group = older_slave_group
         self.current_load_balance_options = older_load_balance_options
       end
     end
@@ -339,6 +292,28 @@ module Octopus
       ensure
         self.current_group = older_group
       end
+    end
+
+    private
+
+    def master_connection
+      master_shard_name ? safe_connection(shards[master_shard_name]) : select_connection
+    end
+          
+    def master_shard_name
+      Thread.current['octopus.master_shard_name']
+    end
+
+    def master_shard_name=(master_shard_name)
+      Thread.current['octopus.master_shard_name'] = master_shard_name
+    end
+
+    def slave_connection
+      select_connection
+    end
+
+    def should_use_slave?(method)
+      !@in_transaction && method.to_s =~ /select/
     end
   end
 end

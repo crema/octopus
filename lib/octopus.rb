@@ -15,17 +15,7 @@ module Octopus
   end
 
   def self.config
-    @config ||= begin
-      file_name = File.join(Octopus.directory, 'config/shards.yml').to_s
-
-      if File.exist?(file_name) || File.symlink?(file_name)
-        config ||= HashWithIndifferentAccess.new(YAML.load(ERB.new(File.read(file_name)).result))[Octopus.env]
-      else
-        config ||= HashWithIndifferentAccess.new
-      end
-
-      config
-    end
+    @config ||= HashWithIndifferentAccess.new
   end
 
   def self.load_balancer=(balancer)
@@ -137,11 +127,11 @@ module Octopus
     ActiveRecord::Base.connection.initialize_shards(@config)
   end
 
-  def self.using(shard, &block)
+  def self.using(shard, args={}, &block)
     conn = ActiveRecord::Base.connection
 
     if conn.is_a?(Octopus::Proxy)
-      conn.run_queries_on_shard(shard, &block)
+      conn.run_queries_on_shard(shard, args, &block)
     else
       yield
     end
@@ -165,14 +155,6 @@ module Octopus
     else
       yield
     end
-  end
-
-  def self.fully_replicated(&_block)
-    old_fully_replicated = Thread.current[Octopus::ProxyConfig::FULLY_REPLICATED_KEY]
-    Thread.current[Octopus::ProxyConfig::FULLY_REPLICATED_KEY] = true
-    yield
-  ensure
-    Thread.current[Octopus::ProxyConfig::FULLY_REPLICATED_KEY] = old_fully_replicated
   end
 end
 
