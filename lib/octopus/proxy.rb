@@ -76,7 +76,6 @@ module Octopus
       self.current_shard = Octopus.master_shard
       self.current_model = nil
       self.current_group = nil
-      self.block = nil
       self.in_block = false
     end
 

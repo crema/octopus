@@ -4,7 +4,6 @@ module Octopus
     CURRENT_SHARD_KEY = 'octopus.current_shard'.freeze
     CURRENT_GROUP_KEY = 'octopus.current_group'.freeze
     CURRENT_LOAD_BALANCE_OPTIONS_KEY = 'octopus.current_load_balance_options'.freeze
-    BLOCK_KEY = 'octopus.block'.freeze
     FULLY_REPLICATED_KEY = 'octopus.fully_replicated'.freeze
 
     attr_accessor :config, :sharded, :shards, :shards_slave_groups, :slave_groups,

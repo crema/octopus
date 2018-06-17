@@ -18,10 +18,6 @@ describe Octopus::Proxy do
       expect(proxy.shards_for_group('history_shards')).to include(:aug2009, :aug2010, :aug2011)
     end
 
-    it 'should initialize the block attribute as false' do
-      expect(proxy.block).to be_falsey
-    end
-
     it 'should initialize replicated attribute as false' do
       expect(proxy.replicated).to be_falsey
     end

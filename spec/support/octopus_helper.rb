@@ -22,7 +22,6 @@ module OctopusHelper
     Thread.current['octopus.current_shard'] = nil
     Thread.current['octopus.current_group'] = nil
     Thread.current['octopus.current_slave_group'] = nil
-    Thread.current['octopus.block'] = nil
 
     ActiveRecord::Base.class_variable_set(:@@connection_proxy, nil)
   end

@@ -53,7 +53,9 @@ module Octopus
           shards.merge(Array.wrap(shard))
         end
 
-        shards.to_a.presence || current_group_specified ? [] : [Octopus.master_shard]
+        result = shards.to_a
+        result = [Octopus.master_shard] if !current_group_specified && shards.empty?
+        result
       end
     end
   end
