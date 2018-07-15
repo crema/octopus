@@ -43,7 +43,7 @@ module Octopus
       def set_current_shard
         return unless Octopus.enabled?
 
-        if new_record? || self.class.connection_proxy.block
+        if new_record? || self.class.connection_proxy.in_block?
           self.current_shard = self.class.connection_proxy.current_shard
         else
           self.current_shard = self.class.connection_proxy.last_current_shard || self.class.connection_proxy.current_shard
@@ -70,16 +70,9 @@ module Octopus
     end
 
     module ClassMethods
-      include SharedMethods
-
       def self.extended(base)
-        base.class_attribute(:replicated)
         base.class_attribute(:sharded)
         base.hijack_methods
-      end
-
-      def replicated_model
-        self.replicated = true
       end
 
       def sharded_model
@@ -92,20 +85,12 @@ module Octopus
 
         class << self
           attr_accessor :custom_octopus_connection
-          attr_accessor :custom_octopus_table_name
 
           alias_method_chain :connection, :octopus
           alias_method_chain :connection_pool, :octopus
           alias_method_chain :clear_all_connections!, :octopus
           alias_method_chain :clear_active_connections!, :octopus
           alias_method_chain :connected?, :octopus
-
-          alias_method_chain(:set_table_name, :octopus) if Octopus.rails3?
-
-          def table_name=(value = nil)
-            self.custom_octopus_table_name = true
-            super
-          end
         end
       end
 
@@ -160,19 +145,9 @@ module Octopus
         end
       end
 
-      def set_table_name_with_octopus(value = nil, &block)
-        self.custom_octopus_table_name = true
-        set_table_name_without_octopus(value, &block)
-      end
-
       def octopus_establish_connection(spec = ENV['DATABASE_URL'])
         self.custom_octopus_connection = true if spec
         establish_connection(spec)
-      end
-
-      def octopus_set_table_name(value = nil)
-        ActiveSupport::Deprecation.warn 'Calling `octopus_set_table_name` is deprecated and will be removed in Octopus 1.0.', caller
-        set_table_name(value)
       end
     end
   end

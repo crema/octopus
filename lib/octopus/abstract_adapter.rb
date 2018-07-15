@@ -2,7 +2,7 @@
 module Octopus
   module AbstractAdapter
     module OctopusShard
-      parent = Octopus.rails3? ? ActiveSupport::BasicObject : ActiveSupport::ProxyObject
+      parent = ActiveSupport::ProxyObject
 
       class InstrumenterDecorator < parent
         def initialize(adapter, instrumenter)

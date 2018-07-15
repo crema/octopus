@@ -4,37 +4,6 @@ module Octopus
       base.send(:include, InstanceMethods)
     end
 
-    module QueryOnCurrentShard
-      METHODS = %w(
-        all
-        average
-        count
-        empty?
-        exists?
-        find
-        find_by_sql
-        first
-        last
-        maximum
-        minimum
-        pluck
-        scoping
-        size
-        sum
-        to_a
-      )
-
-      METHODS.each do |m|
-        define_method m.to_sym do |*args, &block|
-          if self.respond_to?(:proxy_association) && proxy_association
-            proxy_association.owner.run_on_shard { super(*args, &block) }
-          else
-            super(*args, &block)
-          end
-        end
-      end
-    end
-
     module InstanceMethods
       def connection_on_association=(record)
         return unless ::Octopus.enabled?
@@ -47,36 +16,22 @@ module Octopus
       end
     end
 
-    if Octopus.rails4?
-      def has_many(association_id, scope = nil, options = {}, &extension)
-        if options == {} && scope.is_a?(Hash)
-          default_octopus_opts(scope)
-        else
-          default_octopus_opts(options)
-        end
-        super
-      end
-    else
-      def has_many(association_id, options = {}, &extension)
+    def has_many(association_id, scope = nil, options = {}, &extension)
+      if options == {} && scope.is_a?(Hash)
+        default_octopus_opts(scope)
+      else
         default_octopus_opts(options)
-        super
       end
+      super
     end
 
-    if Octopus.rails4?
-      def has_and_belongs_to_many(association_id, scope = nil, options = {}, &extension)
-        if options == {} && scope.is_a?(Hash)
-          default_octopus_opts(scope)
-        else
-          default_octopus_opts(options)
-        end
-        super
-      end
-    else
-      def has_and_belongs_to_many(association_id, options = {}, &extension)
+    def has_and_belongs_to_many(association_id, scope = nil, options = {}, &extension)
+      if options == {} && scope.is_a?(Hash)
+        default_octopus_opts(scope)
+      else
         default_octopus_opts(options)
-        super
       end
+      super
     end
 
     def default_octopus_opts(options)
@@ -95,8 +50,6 @@ module Octopus
       else
         options[:before_remove] = :connection_on_association=
       end
-
-      options[:extend] = [Octopus::AssociationShardTracking::QueryOnCurrentShard, options[:extend]].flatten.compact
     end
   end
 end
