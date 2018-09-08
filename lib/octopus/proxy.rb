@@ -5,6 +5,7 @@ require 'octopus/load_balancing/round_robin'
 module Octopus
   class Proxy
     attr_accessor :config, :sharded
+    attr_reader :shards
 
     CURRENT_MODEL_KEY = 'octopus.current_model'.freeze
     CURRENT_SHARD_KEY = 'octopus.current_shard'.freeze
@@ -65,7 +66,7 @@ module Octopus
           @groups[key.to_s] = []
 
           value.each do |k, v|
-            fail 'You have duplicated shard names!' if @shards.key?(k.to_sym)
+            fail 'You have duplicated shard names!' if shards.key?(k.to_sym)
 
             initialize_adapter(v['adapter'])
             config_with_octopus_shard = v.merge(:octopus_shard => k)
@@ -92,7 +93,7 @@ module Octopus
         @fully_replicated = true
       end
 
-      @slaves_list = @shards.keys.map(&:to_s).sort
+      @slaves_list = shards.keys.map(&:to_s).sort
       @slaves_list.delete('master')
       @slaves_load_balancer = Octopus.load_balancer.new(@slaves_list)
     end
@@ -196,7 +197,7 @@ module Octopus
     #
     # Returns an array of shard names as symbols
     def shard_names
-      @shards.keys
+      shards.keys
     end
 
     # Public: Retrieves the defined shards for a given group.
@@ -308,16 +309,18 @@ module Octopus
     end
 
     def connection_pool
-      @shards[current_shard]
+      shards[current_shard]
     end
 
-    def enable_query_cache!
-      clear_query_cache
-      with_each_healthy_shard { |v| v.connected? && safe_connection(v).enable_query_cache! }
-    end
+    if Octopus.rails4?
+      def enable_query_cache!
+        clear_query_cache
+        with_each_healthy_shard { |v| v.connected? && safe_connection(v).enable_query_cache! }
+      end
 
-    def disable_query_cache!
-      with_each_healthy_shard { |v| v.connected? && safe_connection(v).disable_query_cache! }
+      def disable_query_cache!
+        with_each_healthy_shard { |v| v.connected? && safe_connection(v).disable_query_cache! }
+      end
     end
 
     def clear_query_cache
@@ -333,7 +336,7 @@ module Octopus
     end
 
     def connected?
-      @shards.any? { |_k, v| v.connected? }
+      shards.any? { |_k, v| v.connected? }
     end
 
     def should_send_queries_to_shard_slave_group?(method)
@@ -356,7 +359,7 @@ module Octopus
 
     # Ensure that a single failing slave doesn't take down the entire application
     def with_each_healthy_shard
-      @shards.each do |shard_name, v|
+      shards.each do |shard_name, v|
         begin
           yield(v)
         rescue => e
@@ -371,7 +374,7 @@ module Octopus
       ar_pools = ActiveRecord::Base.connection_handler.connection_pool_list
 
       ar_pools.each do |pool|
-        next if pool == @shards[:master] # Already handled this
+        next if pool == shards[:master] # Already handled this
 
         begin
           yield(pool)
@@ -529,7 +532,7 @@ module Octopus
     private
 
     def master_connection
-      master_shard_name ? safe_connection(@shards[master_shard_name]) : select_connection
+      master_shard_name ? safe_connection(shards[master_shard_name]) : select_connection
     end
 
     def master_shard_name
